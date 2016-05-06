@@ -1,20 +1,78 @@
+#include <cstdlib>
 #include <cstdio>
+#include <cstring>
+
+#include <vector>
+#include <map>
+
+#include <unistd.h>
+
+#include "events.h"
+#include "structures.h"
+#include "plugin_headers.h"
 
 using namespace std;
+
+map<int, vector<Callback> > event_callbacks;
+
+int const BUFF_LEN_MAX = 128;
+
+void register_event_or_crash(int event);
+void register_callback(int event, Callback callback);
+void generate_event(int event, EventData *data);
+
 void init() {
-#include "init.inc"
-}
-void wait_for_command() {
-#include "wait_for_command.inc"
-}
-void process_command() {
-#include "process_command.inc"
+#include "register_event.inc"
+#include "register_callback.inc"
+
+    generate_event(EVENT_INIT, NULL);
 }
 
-int main(int argc, int argv) {
+char *get_command() {
+    char *buffer = (char *)malloc(BUFF_LEN_MAX*sizeof(char));
+    if (fgets(buffer, BUFF_LEN_MAX, stdin))
+        if (buffer[strlen(buffer)-1] == '\n')
+            return buffer;
+
+    free(buffer);
+    return NULL;
+}
+void process_command(char* command) {
+    EventData data;
+    generate_event(EVENT_BEFORE_COMMAND, &data);
+    data.field["command"] = command;
+    generate_event(EVENT_PROCESS_COMMAND, &data);
+}
+void after_command(char *command) {
+    EventData data;
+    data.field["command"] = command;
+    generate_event(EVENT_AFTER_COMMAND, &data);
+    free(command);
+}
+
+int main(int argc, char** argv) {
     init();
     while (true) {
-        wait_for_command();
-        process_command();
+        char* command = get_command();
+        process_command(command);
+        after_command(command);
+    }
+}
+
+void register_event_or_crash(int event){
+    if (event_callbacks.count(event) != 0) {
+        fprintf(stderr, "error: event %d has been registered\n", event);
+        exit(1);
+    }
+    event_callbacks[event] = vector<Callback>();
+    printf ("event %d registered\n", event);
+}
+void register_callback(int event, Callback callback){
+    event_callbacks[event].push_back(callback);
+}
+void generate_event(int event, EventData *data) {
+    vector<Callback> const &callbacks = event_callbacks[event];
+    for (auto iter = callbacks.begin(); iter != callbacks.end(); iter++) {
+        (*iter)(data);
     }
 }

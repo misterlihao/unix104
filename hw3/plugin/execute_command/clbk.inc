@@ -1,0 +1,1 @@
+EVENT_BEFORE_COMMAND, execute_command_before_command
