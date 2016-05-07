@@ -1,1 +1,1 @@
-EVENT_BEFORE_COMMAND, execute_command_before_command
+EVENT_PROCESS_COMMAND, execute_command_process_command

@@ -30,24 +30,20 @@ void init() {
 
 char *get_command() {
     char *buffer = (char *)malloc(BUFF_LEN_MAX*sizeof(char));
-    if (fgets(buffer, BUFF_LEN_MAX, stdin))
+    if (fgets(buffer, BUFF_LEN_MAX, stdin)) {
         if (buffer[strlen(buffer)-1] == '\n')
             return buffer;
+        fprintf(stderr, "command to long, only read %s\n", buffer);
+    }
 
     free(buffer);
     return NULL;
 }
 void process_command(char* command) {
     EventData data;
+    data.field["raw_command"] = command;
     generate_event(EVENT_BEFORE_COMMAND, &data);
-    data.field["command"] = command;
     generate_event(EVENT_PROCESS_COMMAND, &data);
-}
-void after_command(char *command) {
-    EventData data;
-    data.field["command"] = command;
-    generate_event(EVENT_AFTER_COMMAND, &data);
-    free(command);
 }
 
 int main(int argc, char** argv) {
@@ -55,7 +51,6 @@ int main(int argc, char** argv) {
     while (true) {
         char* command = get_command();
         process_command(command);
-        after_command(command);
     }
 }
 

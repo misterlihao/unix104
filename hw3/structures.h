@@ -3,10 +3,6 @@
 #include <string>
 #include <map>
 
-struct Command {
-char *file;
-char **args;
-};
 struct EventData {
     // use void const for both const and nonconst data
     // try const_cast if data is not const and editing is needed
