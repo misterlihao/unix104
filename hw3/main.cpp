@@ -5,15 +5,21 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #define BUF_SIZE 1024
 
 using namespace std;
 
-struct Command {
+struct Task {
     char **args;
-    Command *next;
-} *g_command;
+    char *in_file;
+    char *out_file;
+    int background;
+    Task *next;
+} *g_task;
 
 struct ChildGroup {
     pid_t leader_pid;
@@ -26,22 +32,20 @@ struct CStrList {
     CStrList *next;
 };
 
-struct Pipe {
-    int pipe[2];
-    Pipe *prev;
-} *g_pipe;
-
 char g_buffer[BUF_SIZE];
 
 static void get_command();
-static void parse_command_relation(char *command);
-static void execute_command();
+static void parse_task_relation(char *command);
+static void execute_task();
 
 int main(int argc, char** args) {
+    signal(SIGINT, SIG_IGN);
+    signal(SIGQUIT, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);
     while (true) {
         putchar('$');
         get_command();
-        execute_command();
+        execute_task();
     }
 }
 
@@ -55,7 +59,7 @@ void get_command(){
             return;
         }
         *last_char = '\0';
-        parse_command_relation(g_buffer);
+        parse_task_relation(g_buffer);
     }
     else {
         puts("");
@@ -63,14 +67,38 @@ void get_command(){
     }
 }
 
-static char **parse_command_args(char *command) {
+static void parse_task_fields(Task *task,char *command) {
         CStrList str_list;
         CStrList *prev = &str_list;
         CStrList *cstr;
         char *strtok_context;
         char *tok = strtok_r(command, " ", &strtok_context);
         int count = 0;
+        int redir_in = 0;
+        int redir_out = 0;
+
         if (tok) do {
+            if (redir_in){
+                task->in_file = tok;
+                redir_in = redir_out = 0;
+                continue;
+            }
+            if (redir_out){
+                task->out_file = tok;
+                redir_in = redir_out = 0;
+                continue;
+            }
+                
+            if (strcmp(tok, "<") == 0) {
+                redir_in = 1;
+                continue;
+            } else if (strcmp(tok, ">") == 0) {
+                redir_out = 1;
+                continue;
+            } else if (strcmp(tok, "&") == 0) {
+                task->background = 1;
+                break;
+            }
             count++;
             cstr = new CStrList();
             cstr->str = tok;
@@ -86,72 +114,112 @@ static char **parse_command_args(char *command) {
             cstr = cstr->next;
             delete prev;
         }
-        return args;
+        task->args = args;
 }
-void parse_command_relation(char * buffer){
-    Command *cmd;
+void parse_task_relation(char * buffer){
+    Task *prev_cmd = NULL;
     char *strtok_context;
 
     char *tok = strtok_r(buffer, "|", &strtok_context);
     do {
-        cmd = new Command();
-        if (g_command == NULL)
-            g_command = cmd;
+        Task *cmd = new Task();
+        if (prev_cmd == NULL) // g_task is NULL too
+            g_task = prev_cmd = cmd;
         else
-            g_command->next = cmd;
+            prev_cmd->next = cmd;
 
-        cmd->args = parse_command_args(tok);
-
+        parse_task_fields(cmd, tok);
+        prev_cmd = cmd;
     } while (tok = strtok_r(NULL, "|", &strtok_context));
 }
-void execute_command(){
-    while (g_command) {
-        Pipe *_pipe_ = new Pipe();
-        _pipe_->prev = g_pipe;
-        g_pipe = _pipe_;
-        pipe(_pipe_->pipe);
-
+void execute_task(){
+    int prev_pipefd[2] = {-1,-1};
+    int group_id = 0;
+    while (g_task) {
+        int pipefd[2];
+        pipe(pipefd);
         pid_t child_pid = fork();
 
         // meaningful only for parent
-        if (g_front_group == 0)
-            g_front_group = child_pid;
-        // set child group in both parent and child
-        setpgid(child_pid, g_front_group);
-
-        if (child_pid == 0) {
-            if (_pipe_->prev) {
-                if (dup2(_pipe_->prev->pipe[0], STDIN_FILENO) == -1)
-                    perror("dup2 to stdin");
-            }
-            if (g_command->next) {
-                if (dup2(_pipe_->pipe[1], STDOUT_FILENO) == -1)
-                    perror("dup2 to stdout");
-            }
-            execvp(g_command->args[0], g_command->args);
-            perror("exec");
+        if (group_id == 0) {
+            group_id = child_pid;
+            if (!g_task->background)
+                g_front_group = group_id;
         }
+        // set child group in both parent and child
+        setpgid(child_pid, group_id);
+
+        if (child_pid == 0) { // is child
+            signal(SIGINT, SIG_DFL);
+            signal(SIGQUIT, SIG_DFL);
+            signal(SIGTTOU, SIG_DFL);
+            // command pipeline
+            if (prev_pipefd[0] != -1) { // not first command
+                if (dup2(prev_pipefd[0], STDIN_FILENO) == -1)
+                    perror("dup2 to stdin");
+                close(prev_pipefd[0]);
+                close(prev_pipefd[1]);
+            }
+
+            if (g_task->next) { // not last command
+                if (dup2(pipefd[1], STDOUT_FILENO) == -1)
+                    perror("dup2 to stdout");
+                close(pipefd[0]);
+                close(pipefd[1]);
+            }
+            else {
+                close(pipefd[0]);
+                close(pipefd[1]);
+            }
+
+            // file redirect
+            if (g_task->in_file) {
+                int fd = open(g_task->in_file, O_RDONLY);
+                if (fd != -1) {
+                    dup2(fd, STDIN_FILENO);
+                    close(fd);
+                }
+                else {
+                    perror("open file");
+                }
+            }
+            if (g_task->out_file) {
+                int fd = open(g_task->out_file, O_WRONLY|O_CREAT, 0666);
+                if (fd != -1) {
+                    dup2(fd, STDOUT_FILENO);
+                    close(fd);
+                }
+                else {
+                    perror("open file");
+                }
+            }
+
+            execvp(g_task->args[0], g_task->args);
+            perror("exec");
+            exit(1);
+        }
+        // is parent
+        if (prev_pipefd[0] != -1) {
+            close(prev_pipefd[0]);
+            close(prev_pipefd[1]);
+        }
+        prev_pipefd[0] = pipefd[0];
+        prev_pipefd[1] = pipefd[1];
 
         // remove processed command
-        Command *next_command = g_command->next;
-        delete g_command;
-        g_command = next_command;
+        Task *next_command = g_task->next;
+        delete g_task;
+        g_task = next_command;
     }
 
-    // close and delete pipes
-    while (g_pipe) {
-        Pipe *p = g_pipe->prev;
-        close(g_pipe->pipe[0]);
-        close(g_pipe->pipe[1]);
-        delete g_pipe;
-        g_pipe = p;
+    if (group_id == g_front_group) {
+        // just work when no job control
+        tcsetpgrp(STDERR_FILENO, g_front_group);
+        while (pid_t pid = waitpid(g_front_group, NULL, 0)) {
+            if (pid == -1)
+                break;
+        }
+        g_front_group = 0;
+        tcsetpgrp(STDERR_FILENO, getpgrp());
     }
-
-    while (pid_t pid = waitpid(0 - g_front_group, NULL, 0)) {
-        if (pid == -1)
-            break;
-        fprintf(stderr, "child %d stopped.\n", pid);
-    }
-    g_front_group = 0;
-
 }

@@ -1,4 +1,2 @@
-plugin_headers.h
-events.h
-register_event.inc
-register_callback.inc
+a.out
+*.o
