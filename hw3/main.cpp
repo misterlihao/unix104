@@ -211,11 +211,13 @@ void execute_task(){
         delete g_task;
         g_task = next_command;
     }
+    close(prev_pipefd[0]);
+    close(prev_pipefd[1]);
 
     if (group_id == g_front_group) {
         // just work when no job control
         tcsetpgrp(STDERR_FILENO, g_front_group);
-        while (pid_t pid = waitpid(g_front_group, NULL, 0)) {
+        while (pid_t pid = waitpid(-g_front_group, NULL, 0)) {
             if (pid == -1)
                 break;
         }
