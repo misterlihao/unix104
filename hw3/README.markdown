@@ -1,5 +1,7 @@
-all basic requirement and no optional ones are fulfilled  
-use make to generate a.out, which is the executable.
+This is a simple shell.
 
-all test case have been passed.  
-use Ctrl+D to exit.
+All basic requirement and no optional ones are fulfilled.  
+Use `make` to generate `a.out`, which is the executable.
+
+All test case have been passed.  
+Use `Ctrl+D` to exit.
