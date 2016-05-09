@@ -211,6 +211,7 @@ void execute_task(){
         delete g_task;
         g_task = next_command;
     }
+    /// FIXME: is this pipe closing needed?
     close(prev_pipefd[0]);
     close(prev_pipefd[1]);
 
